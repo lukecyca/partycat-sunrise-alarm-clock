@@ -1,0 +1,3 @@
+[submodule "libdcc"]
+	path = libdcc
+	url = https://github.com/DominionCider/libdcc.git
