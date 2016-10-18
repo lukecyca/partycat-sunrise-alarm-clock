@@ -11,7 +11,12 @@ unsigned long lastNTPSync = 0;
 #define serialStatusInterval (10000)
 unsigned long lastSerialStatus = 0;
 
-#define NUM_LEDS 119
+#define lightUpdateInterval (200)
+unsigned long lastLightUpdate = 0;
+char alarmOn = 0;
+unsigned long sunriseStartTime = 0;
+
+#define NUM_LEDS 120
 static WS2812 ledstrip;
 static Pixel_t pixels[NUM_LEDS];
 
@@ -27,7 +32,50 @@ static Pixel_t pixels[NUM_LEDS];
 #define RED_LED_PIN 16
 #define WHITE_PIN 14
 
+
+#define SETTINGS_VERSION "s4d2"
+struct Settings {
+  int onTime;
+  int offTime;
+  int timeZone;
+} settings = {
+  23400,
+  28800,
+  -7
+};
+
 #include "libdcc/webserver.h"
+#include "libdcc/settings.h"
+#include "colourscheme.h"
+
+String formatSettings() {
+  return \
+    String("onTime=") + String(settings.onTime) + \
+    String(",offTime=") + String(settings.offTime) + \
+    String(",timeZone=") + String(settings.timeZone);
+}
+
+void handleSettings() {
+  REQUIRE_AUTH;
+
+  for (int i=0; i<server.args(); i++) {
+    if (server.argName(i).equals("onTime")) {
+      settings.onTime = server.arg(i).toFloat();
+    } else if (server.argName(i).equals("offTime")) {
+      settings.offTime = server.arg(i).toFloat();
+    } else if (server.argName(i).equals("timeZone")) {
+      settings.timeZone = server.arg(i).toFloat();
+    } else {
+      Serial.println("Unknown argument: " + server.argName(i) + ": " + server.arg(i));
+    }
+  }
+
+  saveSettings();
+
+  String msg = String("Settings saved: ") + formatSettings();
+  Serial.println(msg);
+  server.send(200, "text/plain", msg);
+}
 
 void setup() {
   pinMode(WHITE_PIN, OUTPUT);
@@ -46,6 +94,7 @@ void setup() {
   WiFi.softAP("Internet Lightbox", WEBSERVER_PASSWORD);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  server.on("/settings", handleSettings);
   server.on("/restart", handleRestart);
   server.on("/status", handleStatus);
   server.on("/colour", handleColour);
@@ -135,11 +184,12 @@ void loop() {
     Serial.print("packet received after ");
     Serial.print(millis() - lastNTPRequest);
     Serial.print("ms... ");
-    setTime(readNTPpacket());
+    setTime(readNTPpacket(settings.timeZone));
     Serial.println("DONE");
     lastNTPSync = millis();
   }
 
+  // Update lights
   ledstrip.show(pixels);
 
   server.handleClient();
@@ -153,19 +203,34 @@ void loop() {
   }
 
   if ((lastNTPSync == 0) || (millis() - lastNTPSync > ntpSyncInterval * 10)) {
-    // No NTP Sync
+    // NTP has not run in the last 10 attempts (or ever)
     setStatus(255, 255, 0);
   } else {
-    // Run CRON algorithm here
-    setColour(sin(millis()/1000.) * 127 + 127, 0, cos(millis()/1000.) * 127 + 127);
+    // Run CRON algorithm
+    if (elapsedSecsToday(now()) > settings.offTime) {
+      if (alarmOn) {
+        alarmOn = 0;
+        sunriseStartTime = 0;
+        setColour(0, 0, 0);
+        analogWrite(WHITE_PIN, 0);
+      }
+    } else if (elapsedSecsToday(now()) > settings.onTime) {
+      if (!alarmOn) {
+        alarmOn = 1;
+        sunriseStartTime = millis();
+      }
+    }
   }
 
+  if (alarmOn && (millis() - lastLightUpdate > lightUpdateInterval)) {
+    drawFrame();
+
+    lastLightUpdate = millis();
+  }
 
 
   // Output serial status
   if (millis() - lastSerialStatus  > serialStatusInterval) {
-    Serial.println("Wifi connected to " + WiFi.SSID() + " IP:" + WiFi.localIP().toString());
-    Serial.println(elapsedSecsToday(now()));
     lastSerialStatus = millis();
   }
 

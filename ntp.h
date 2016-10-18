@@ -1,9 +1,6 @@
 #include <WiFiUdp.h>
 #include <TimeLib.h>
 
-const int timeZone = -8;  // Pacific Standard Time (USA)
-//const int timeZone = -7;  // Pacific Daylight Time (USA)
-
 WiFiUDP udp;
 unsigned int localPort = 2390;
 IPAddress timeServerIP;
@@ -42,7 +39,7 @@ unsigned long sendNTPpacket() {
 }
 
 // read an NTP response and convert it to a time_t in the configured timezone
-time_t readNTPpacket() {
+time_t readNTPpacket(int timeZone) {
 
   udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
 
