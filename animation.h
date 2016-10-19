@@ -981,7 +981,7 @@ byte sunrise[SUNRISE_FRAMES][3] = {
 // Start to bring up the white LEDs over the last N frames
 #define WHITE_OFFSET (300.)
 
-#define ROW_FRAME_LAG (60)
+#define ROW_FRAME_LAG (90)
 
 int drawSunriseFrame() {
   int frame = (millis() - animationStartTime) * settings.fps / 1000;
