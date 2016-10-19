@@ -11,10 +11,17 @@ unsigned long lastNTPSync = 0;
 #define serialStatusInterval (10000)
 unsigned long lastSerialStatus = 0;
 
-#define lightUpdateInterval (200)
-unsigned long lastLightUpdate = 0;
+#define animationInterval (10)
+unsigned long lastAnimationUpdate = 0;
 char alarmOn = 0;
-unsigned long sunriseStartTime = 0;
+unsigned long animationStartTime = 0;
+
+#define ANIM_STATE_CONNECTING(-1)
+#define ANIM_STATE_OFF (0)
+#define ANIM_STATE_SUNRISE (1)
+#define ANIM_STATE_FADEOUT (2)
+int animationState = ANIM_STATE_CONNECTING;
+
 
 #define NUM_LEDS 120
 static WS2812 ledstrip;
@@ -46,7 +53,7 @@ struct Settings {
 
 #include "libdcc/webserver.h"
 #include "libdcc/settings.h"
-#include "colourscheme.h"
+#include "animation.h"
 
 String formatSettings() {
   return \
@@ -205,27 +212,42 @@ void loop() {
   if ((lastNTPSync == 0) || (millis() - lastNTPSync > ntpSyncInterval * 10)) {
     // NTP has not run in the last 10 attempts (or ever)
     setStatus(255, 255, 0);
-  } else {
+  }
+
+  if (lastNTPSync != 0) {
+    if (animationState == ANIM_STATE_BOOT) {
+      Serial.println("Finished booting");
+      animationState = ANIM_STATE_FADEOUT;
+      animationStartTime = millis();
+    }
+
     // Run CRON algorithm
     if (elapsedSecsToday(now()) > settings.offTime) {
-      if (alarmOn) {
-        alarmOn = 0;
-        sunriseStartTime = 0;
-        setColour(0, 0, 0);
-        analogWrite(WHITE_PIN, 0);
+      if (animationState == ANIM_STATE_SUNRISE) {
+        Serial.println("Start fadeout");
+        animationState = ANIM_STATE_FADEOUT;
+        animationStartTime = millis();
       }
     } else if (elapsedSecsToday(now()) > settings.onTime) {
-      if (!alarmOn) {
-        alarmOn = 1;
-        sunriseStartTime = millis();
+      if (animationState == ANIM_STATE_OFF) {
+        Serial.println("Start sunrise");
+        animationState = ANIM_STATE_SUNRISE;
+        animationStartTime = millis();
       }
     }
   }
 
-  if (alarmOn && (millis() - lastLightUpdate > lightUpdateInterval)) {
-    drawFrame();
-
-    lastLightUpdate = millis();
+  if (animationState == ANIM_STATE_SUNRISE && (millis() - lastAnimationUpdate > animationInterval)) {
+    drawSunriseFrame();
+    lastAnimationUpdate = millis();
+  }
+  if (animationState == ANIM_STATE_FADEOUT && (millis() - lastAnimationUpdate > animationInterval)) {
+    if (!drawFadeoutFrame()) {
+      Serial.println("Finished fadeout");
+      animationState = ANIM_STATE_OFF;
+      animationStartTime = 0;
+    }
+    lastAnimationUpdate = millis();
   }
 
 

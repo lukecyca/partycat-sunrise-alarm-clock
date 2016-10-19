@@ -981,15 +981,17 @@ byte sunrise[SUNRISE_FRAMES][3] = {
 // Start to bring up the white LEDs over the last N frames
 #define WHITE_OFFSET (300.)
 
-void drawFrame() {
-  unsigned long t = millis() - sunriseStartTime;
-  int frame = t / 1000;
+// How quickly to advance the sunrise frames (default 1)
+#define FPS (10)
+
+int drawSunriseFrame() {
+  int frame = (millis() - animationStartTime) * FPS / 1000;
 
   if (frame >= SUNRISE_FRAMES) {
-    return;
+    return 0;
   }
 
-  Serial.println(t);
+  Serial.println(frame);
 
   for (int i=0; i<8; i++) {
     int p = random(NUM_LEDS);
@@ -1003,4 +1005,24 @@ void drawFrame() {
     analogWrite(WHITE_PIN, level * 1024);
   }
 
+  return 1;
+}
+
+#define FADE_CONSTANT (0.97)
+int drawFadeoutFrame() {
+  int more = 0;
+
+  for (int i=0; i<NUM_LEDS; i++) {
+    if (pixels[i].R || pixels[i].G || pixels[i].B) {
+      pixels[i].R *= FADE_CONSTANT;
+      pixels[i].G *= FADE_CONSTANT;
+      pixels[i].B *= FADE_CONSTANT;
+      more = 1;
+    }
+  }
+
+  // FIXME
+  analogWrite(WHITE_PIN, pixels[NUM_LEDS-1].R);
+
+  return more;
 }
