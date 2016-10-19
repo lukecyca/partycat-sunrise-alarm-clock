@@ -981,11 +981,8 @@ byte sunrise[SUNRISE_FRAMES][3] = {
 // Start to bring up the white LEDs over the last N frames
 #define WHITE_OFFSET (300.)
 
-// How quickly to advance the sunrise frames (default 1)
-#define FPS (10)
-
 int drawSunriseFrame() {
-  int frame = (millis() - animationStartTime) * FPS / 1000;
+  int frame = (millis() - animationStartTime) * settings.fps / 1000;
 
   if (frame >= SUNRISE_FRAMES) {
     return 0;
@@ -999,10 +996,11 @@ int drawSunriseFrame() {
     pixels[p].G = sunrise[frame][1];
     pixels[p].B = sunrise[frame][2];
   }
+  ledstrip.show(pixels);
 
   if (frame > SUNRISE_FRAMES - WHITE_OFFSET) {
     float level = min((frame + 1 - (SUNRISE_FRAMES - WHITE_OFFSET)) / WHITE_OFFSET, 1.0);
-    analogWrite(WHITE_PIN, level * 1024);
+    analogWrite(WHITE_PIN, level * PWM_RANGE_FULL);
   }
 
   return 1;
@@ -1020,9 +1018,11 @@ int drawFadeoutFrame() {
       more = 1;
     }
   }
+  ledstrip.show(pixels);
 
-  // FIXME
-  analogWrite(WHITE_PIN, pixels[NUM_LEDS-1].R);
+  // FIXME: Currently fading out the white channel by tracking
+  // an arbitrary pixel's R value!
+  analogWrite(WHITE_PIN, pixels[NUM_LEDS-1].R * PWM_RANGE_FULL / 256);
 
   return more;
 }

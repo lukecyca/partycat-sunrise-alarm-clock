@@ -16,11 +16,10 @@ unsigned long lastAnimationUpdate = 0;
 char alarmOn = 0;
 unsigned long animationStartTime = 0;
 
-#define ANIM_STATE_CONNECTING(-1)
 #define ANIM_STATE_OFF (0)
 #define ANIM_STATE_SUNRISE (1)
 #define ANIM_STATE_FADEOUT (2)
-int animationState = ANIM_STATE_CONNECTING;
+int animationState = ANIM_STATE_OFF;
 
 
 #define NUM_LEDS 120
@@ -38,16 +37,26 @@ static Pixel_t pixels[NUM_LEDS];
 
 #define RED_LED_PIN 16
 #define WHITE_PIN 14
+#define PWM_RANGE_FULL (1024)
 
 
-#define SETTINGS_VERSION "s4d2"
+#define SETTINGS_VERSION "s4d3"
 struct Settings {
+  // Time in seconds after midnight to begin sunrise
   int onTime;
+
+  // Time in seconds after midnight to turn off the light
   int offTime;
+
+  // How quickly to advance the sunrise frames (default 1)
+  int fps;
+
+  // Timezone offset
   int timeZone;
 } settings = {
   23400,
   28800,
+  1,
   -7
 };
 
@@ -59,6 +68,7 @@ String formatSettings() {
   return \
     String("onTime=") + String(settings.onTime) + \
     String(",offTime=") + String(settings.offTime) + \
+    String(",fps=") + String(settings.fps) + \
     String(",timeZone=") + String(settings.timeZone);
 }
 
@@ -70,8 +80,10 @@ void handleSettings() {
       settings.onTime = server.arg(i).toFloat();
     } else if (server.argName(i).equals("offTime")) {
       settings.offTime = server.arg(i).toFloat();
+    } else if (server.argName(i).equals("fps")) {
+      settings.fps = server.arg(i).toInt();
     } else if (server.argName(i).equals("timeZone")) {
-      settings.timeZone = server.arg(i).toFloat();
+      settings.timeZone = server.arg(i).toInt();
     } else {
       Serial.println("Unknown argument: " + server.argName(i) + ": " + server.arg(i));
     }
@@ -85,6 +97,7 @@ void handleSettings() {
 }
 
 void setup() {
+  analogWriteRange(PWM_RANGE_FULL);
   pinMode(WHITE_PIN, OUTPUT);
   digitalWrite(RED_LED_PIN, LOW);
 
@@ -93,9 +106,10 @@ void setup() {
 
   Serial.begin(115200);
 
+  loadSettings();
+
   ledstrip.init(NUM_LEDS);
   setColour(0, 0, 0);
-  setStatus(255, 0, 0);
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP("Internet Lightbox", WEBSERVER_PASSWORD);
@@ -104,9 +118,6 @@ void setup() {
   server.on("/settings", handleSettings);
   server.on("/restart", handleRestart);
   server.on("/status", handleStatus);
-  server.on("/colour", handleColour);
-  server.on("/white", handleWhite);
-  server.on("/flash", handleFlash);
   server.onNotFound(handleNotFound);
   server.begin();
 
@@ -116,77 +127,16 @@ void setup() {
   Serial.println(udp.localPort());
 }
 
-
-void handleFlash() {
-  int times=0;
-
-  for (int i=0; i<server.args(); i++) {
-    if (server.argName(i).equals("times")) {
-      times = server.arg(i).toInt();
-    } else {
-      Serial.println("Unknown argument: " + server.argName(i) + ": " + server.arg(i));
-    }
-  }
-
-  flash(times);
-
-  server.send(200, "text/plain", "ok");
-}
-
-void handleWhite() {
-  int level=-1;
-
-  for (int i=0; i<server.args(); i++) {
-    if (server.argName(i).equals("level")) {
-      level = server.arg(i).toInt();
-    } else {
-      Serial.println("Unknown argument: " + server.argName(i) + ": " + server.arg(i));
-    }
-  }
-
-  if (level > -1) {
-    Serial.print("Setting white to ");
-    Serial.println(level);
-    analogWrite(WHITE_PIN, level);
-  }
-
-  server.send(200, "text/plain", "ok");
-}
-
-void handleColour() {
-  uint8_t r=0, g=0, b=0;
-
-  for (int i=0; i<server.args(); i++) {
-    if (server.argName(i).equals("r")) {
-      r = server.arg(i).toInt();
-    } else if (server.argName(i).equals("g")) {
-      g = server.arg(i).toInt();
-    } else if (server.argName(i).equals("b")) {
-      b = server.arg(i).toInt();
-    } else {
-      Serial.println("Unknown argument: " + server.argName(i) + ": " + server.arg(i));
-    }
-  }
-
-  String response = String("Setting color to ") + r + ", " + g + ", " + b + ".";
-  Serial.println(response);
-
-  setColour(r, g, b);
-
-  server.send(200, "text/plain", response);
-}
-
-void setColour(uint8_t r, uint8_t g, uint8_t b) {
-  for(int i=0; i<NUM_LEDS; i++) {
-    pixels[i].R = r;
-    pixels[i].G = g;
-    pixels[i].B = b;
-  }
-}
-
-
 void loop() {
-  // Receive NTP packet
+  // Connect to wifi if not already
+  if (WiFi.status() != WL_CONNECTED) {
+    flash(3);
+    Serial.println("Connecting to wifi...");
+    delay(1000);
+    return;
+  }
+
+  // Handle incoming NTP packet
   if (udp.parsePacket()) {
     Serial.print("packet received after ");
     Serial.print(millis() - lastNTPRequest);
@@ -196,32 +146,11 @@ void loop() {
     lastNTPSync = millis();
   }
 
-  // Update lights
-  ledstrip.show(pixels);
-
+  // Handle web request
   server.handleClient();
 
-  if (WiFi.status() != WL_CONNECTED) {
-    setStatus(255, 0, 0);
-    flash(3);
-    Serial.println("Connecting to wifi...");
-    delay(1000);
-    return;
-  }
-
-  if ((lastNTPSync == 0) || (millis() - lastNTPSync > ntpSyncInterval * 10)) {
-    // NTP has not run in the last 10 attempts (or ever)
-    setStatus(255, 255, 0);
-  }
-
+  // Run CRON algorithm, but only if we have sync'd to NTP
   if (lastNTPSync != 0) {
-    if (animationState == ANIM_STATE_BOOT) {
-      Serial.println("Finished booting");
-      animationState = ANIM_STATE_FADEOUT;
-      animationStartTime = millis();
-    }
-
-    // Run CRON algorithm
     if (elapsedSecsToday(now()) > settings.offTime) {
       if (animationState == ANIM_STATE_SUNRISE) {
         Serial.println("Start fadeout");
@@ -237,6 +166,7 @@ void loop() {
     }
   }
 
+  // Animate
   if (animationState == ANIM_STATE_SUNRISE && (millis() - lastAnimationUpdate > animationInterval)) {
     drawSunriseFrame();
     lastAnimationUpdate = millis();
@@ -250,14 +180,17 @@ void loop() {
     lastAnimationUpdate = millis();
   }
 
-
-  // Output serial status
+  // Output serial status periodically
   if (millis() - lastSerialStatus  > serialStatusInterval) {
     lastSerialStatus = millis();
   }
 
-  // Send NTP packet
-  if ((millis() - lastNTPRequest > ntpSyncInterval) || ((lastNTPSync == 0) && millis() - lastNTPRequest > 1000)) {
+  // Send NTP packet at regular intervals,
+  // or more frequently if we haven't had a successful sync in the last 10 intervals (or ever)
+  if (
+    (millis() - lastNTPRequest > ntpSyncInterval) ||
+    (((lastNTPSync == 0) || (millis() - lastNTPSync > ntpSyncInterval * 10)) && millis() - lastNTPRequest > 1000)
+  ) {
     flash(2);
     lastNTPRequest = millis();
     sendNTPpacket();
@@ -269,15 +202,15 @@ void flash(int times) {
     digitalWrite(RED_LED_PIN, HIGH);
     delay(50);
     digitalWrite(RED_LED_PIN, LOW);
-    delay(50);
+    delay(100);
   }
 }
 
-void setStatus(uint8_t r, uint8_t g, uint8_t b) {
-  pixels[0].R = r;
-  pixels[0].G = g;
-  pixels[0].B = b;
+void setColour(uint8_t r, uint8_t g, uint8_t b) {
+  for(int i=0; i<NUM_LEDS; i++) {
+    pixels[i].R = r;
+    pixels[i].G = g;
+    pixels[i].B = b;
+  }
+  ledstrip.show(pixels);
 }
-
-
-
