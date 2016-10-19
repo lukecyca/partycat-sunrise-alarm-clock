@@ -2,37 +2,38 @@
 #include <ws2812_i2s.h>
 #include "ntp.h"
 
-
-// Interval in ms to check sync
-#define ntpSyncInterval (600000)
-unsigned long lastNTPRequest = 0;
-unsigned long lastNTPSync = 0;
-
-#define serialStatusInterval (10000)
-unsigned long lastSerialStatus = 0;
-
-#define animationInterval (10)
-unsigned long lastAnimationUpdate = 0;
-char alarmOn = 0;
-unsigned long animationStartTime = 0;
-
-#define ANIM_STATE_OFF (0)
-#define ANIM_STATE_SUNRISE (1)
-#define ANIM_STATE_FADEOUT (2)
-int animationState = ANIM_STATE_OFF;
-
-
-#define NUM_LEDS 120
-#define LEDS_PER_ROW 24
-static WS2812 ledstrip;
-static Pixel_t pixels[NUM_LEDS];
-
 // Define these in the config.h file
 //#define WIFI_SSID "yourwifi"
 //#define WIFI_PASSWORD "yourpassword"
 //#define WEBSERVER_USERNAME "something"
 //#define WEBSERVER_PASSWORD "something"
 #include "config.h"
+
+
+// Interval in ms to resync NTP
+#define ntpSyncInterval (600000)
+unsigned long lastNTPRequest = 0;
+unsigned long lastNTPSync = 0;
+
+// Interval in ms to update animation
+#define animationInterval (10)
+unsigned long lastAnimationUpdate = 0;
+
+// Value of millis() when an animation starts.
+// (used as basis for animation timeline)
+unsigned long animationStartTime = 0;
+
+// Which animation is presently playing (if any)
+#define ANIM_STATE_OFF (0)
+#define ANIM_STATE_SUNRISE (1)
+#define ANIM_STATE_FADEOUT (2)
+int animationState = ANIM_STATE_OFF;
+
+// WS2812 layout parameters
+#define NUM_LEDS 120
+#define LEDS_PER_ROW 24
+static WS2812 ledstrip;
+static Pixel_t pixels[NUM_LEDS];
 
 #define DEVICE_NAME "partycat"
 
@@ -179,11 +180,6 @@ void loop() {
       animationStartTime = 0;
     }
     lastAnimationUpdate = millis();
-  }
-
-  // Output serial status periodically
-  if (millis() - lastSerialStatus  > serialStatusInterval) {
-    lastSerialStatus = millis();
   }
 
   // Send NTP packet at regular intervals,
