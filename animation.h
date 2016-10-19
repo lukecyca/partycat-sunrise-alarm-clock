@@ -981,21 +981,33 @@ byte sunrise[SUNRISE_FRAMES][3] = {
 // Start to bring up the white LEDs over the last N frames
 #define WHITE_OFFSET (300.)
 
+#define ROW_FRAME_LAG (60)
+
 int drawSunriseFrame() {
   int frame = (millis() - animationStartTime) * settings.fps / 1000;
-
-  if (frame >= SUNRISE_FRAMES) {
-    return 0;
-  }
-
   Serial.println(frame);
 
-  for (int i=0; i<8; i++) {
-    int p = random(NUM_LEDS);
-    pixels[p].R = sunrise[frame][0];
-    pixels[p].G = sunrise[frame][1];
-    pixels[p].B = sunrise[frame][2];
+  // Goes from 1.0 to 0.0 over the course of the animation
+  float timeline = 1 - (frame+1.)/SUNRISE_FRAMES;
+
+  int more = 0;
+
+  for (int row=0; row<NUM_LEDS/LEDS_PER_ROW; row++) {
+    int p = row * LEDS_PER_ROW + random(LEDS_PER_ROW);
+
+    // The rows start off with ROW_FRAME_LAG and then catch up exponentially
+    int rowFrame = frame - row * ROW_FRAME_LAG * timeline * timeline;
+
+    if ((rowFrame < 0) || (rowFrame >= SUNRISE_FRAMES)) continue;
+
+    pixels[p].R = sunrise[rowFrame][0];
+    pixels[p].G = sunrise[rowFrame][1];
+    pixels[p].B = sunrise[rowFrame][2];
+    more = 1;
   }
+
+  if (!more) return 0;
+
   ledstrip.show(pixels);
 
   if (frame > SUNRISE_FRAMES - WHITE_OFFSET) {

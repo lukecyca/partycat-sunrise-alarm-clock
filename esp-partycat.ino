@@ -23,6 +23,7 @@ int animationState = ANIM_STATE_OFF;
 
 
 #define NUM_LEDS 120
+#define LEDS_PER_ROW 24
 static WS2812 ledstrip;
 static Pixel_t pixels[NUM_LEDS];
 
